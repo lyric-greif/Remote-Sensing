@@ -1,0 +1,139 @@
+// Part 3 - Dresden, Germany 
+
+Map.setCenter(13.7321, 51.0514, 12); // Center map on Dresden, Germany
+
+// Landsat 8 SR
+var L8SR = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2");  // Call Landsat 8 Level 2, Collection 2, Tier 1
+// Landsat 7 SR
+var L7SR = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2"); // Call Landsat 7 Level 2, Collection 2, Tier 1
+
+// Median 2000 
+var L7SR_2000 = L7SR
+  .filterDate("2000-01-01","2000-12-31")
+  .median()
+  .multiply(0.0000275)
+  .add(-0.2);
+  
+// Median 2020 
+var L8SR_2020 = L8SR
+  .filterDate("2020-01-01","2020-12-31")
+  .median()
+  .multiply(0.0000275)
+  .add(-0.2);
+  
+Map.addLayer(L8SR_2020,{bands:["SR_B4","SR_B3","SR_B2"], min: 0, max: 0.4},"L8SR_2020"); // Add the 2020 vegetation layer to the map
+Map.addLayer(L7SR_2000,{bands:["SR_B3","SR_B2","SR_B1"], min: 0, max: 0.4},"L7SR_2000"); // Add the 2000 vegetation layer to the map
+
+var L8SR_2020_ndvi = L8SR_2020.normalizedDifference(["SR_B5","SR_B4"]).rename('NDVI');  // Create the NDVI layers 
+var L7SR_2000_ndvi = L7SR_2000.normalizedDifference(["SR_B4","SR_B3"]).rename('NDVI'); 
+
+Map.addLayer(L8SR_2020_ndvi,{bands:["NDVI"], palette: ["1d1d1d","28ff25"], min: -1, max: 1},"L8SR_2020_ndvi");  // Add NDVI layers to the map
+Map.addLayer(L7SR_2000_ndvi,{bands:["NDVI"], palette: ["1d1d1d","28ff25"], min: -1, max: 1},"L7SR_2000_ndvi");
+
+var L8SR_2020_ndvi_mask = L8SR_2020_ndvi.gt(0);  // Create Boolean mask to identify areas with vegetation
+var L7SR_2000_ndvi_mask = L7SR_2000_ndvi.gt(0);
+
+var L8SR_2020_ndvi_veg = L8SR_2020_ndvi.updateMask(L8SR_2020_ndvi_mask); // Keep NDVI value where mask > 1 and set pixels to mask where values = 0
+var L7SR_2000_ndvi_veg = L7SR_2000_ndvi.updateMask(L7SR_2000_ndvi_mask); 
+
+Map.addLayer(L8SR_2020_ndvi_veg,{bands:["NDVI"], palette: ["1d1d1d","28ff25"], min: 0, max: 1},"L8SR_2020_ndvi_veg"); // Add updated mask layer to map
+Map.addLayer(L7SR_2000_ndvi_veg,{bands:["NDVI"], palette: ["1d1d1d","28ff25"], min: 0, max: 1},"L7SR_2000_ndvi_veg"); 
+
+
+// Part 2: The code in this section finds the difference between vegetation levels in Dresden from 2000-2020
+
+var veg_diff = L8SR_2020_ndvi.subtract(L7SR_2000_ndvi).gt(0.1); // Create a variable for vegetation difference by subtracting 2000 NDVI from 2020 NDVI
+print(veg_diff);
+Map.addLayer(veg_diff, {}, '2020 - 2000'); // Add vegetation difference to map
+
+// Create binary threshold to identify vegetation gain or loss 
+var cutoff = 0.05  
+var loss = veg_diff.lt(-cutoff) // Calculate loss
+var gain = veg_diff.gt(cutoff) // Calculate gain
+var change = loss.multiply(1).add(gain.multiply(2)) // Calculate change
+
+// visualize
+Map.addLayer(change, {min:1, max:2, palette: ["00FF00","FF0000"]}, "Loss = Green, Gain = Red") // Add layer to map to visualize change in vegetation
+
+
+
+
+// NDVI using MODIS Terra 
+
+var modis = ee.ImageCollection("MODIS/061/MOD13Q1") ; // Call MODIS dataset
+ 
+// Filter the data and generate median values for 2000 
+var modis_2005 = modis
+  .filterDate("2005-01-01","2005-12-31")
+  .median()
+  .multiply(0.0001) // MODIS scale
+
+  
+// Filter 2020 MODIS data and generate median values for 2020
+var modis_2020 = modis
+  .filterDate("2020-01-01","2020-12-31")
+  .median()
+  .multiply(0.0001)
+ 
+  
+Map.addLayer(modis_2020,{bands:["NDVI"], min: -0.2, max: 1.0},"modis_2020"); // Add 2020 MODIS NDVI layer to map
+Map.addLayer(modis_2005,{bands:["NDVI"], min: -0.2, max: 1.0},"modis_2005"); // Add 2005 MODIS NDVI layer to map
+print(dresden_feature)
+
+
+// Isolate a specific area using Geometry (created with drawing tools)
+var dresden_geometry = ee.Geometry.Polygon(
+  [[[13.675843310857804,51.04317109807989],
+  [13.811112475896866,51.085891448728546],
+  [13.675843310857804,51.085891448728546],
+  [13.675843310857804,51.04317109807989]]], null, false
+  )
+  
+  Map.addLayer(dresden_geometry,{},"dresden_geometry"); // Add geometry layer to map
+  
+// function to scale images
+function scale(image){
+  return image.multiply(0.0000275).add(-0.2);
+}
+
+  
+
+// Part 3: Create a time series chart of mean dresden NDVI 
+
+var modis2005 = ee.ImageCollection("MODIS/061/MOD13Q1")
+.filterDate('2005-01-01','2005-12-31')
+.select('NDVI')
+.map(scale);
+
+var modis2020 = ee.ImageCollection("MODIS/061/MOD13Q1")
+.filterDate('2020-01-01','2020-12-31')
+.select('NDVI')
+.map(scale);
+
+// fix projection issue 
+var modis_proj = modis2005.first().projection();
+var geo_dresden_proj = dresden_geometry.transform(modis_proj, 1);
+// not working for some reason??
+
+// Time series chart 2005
+var ndvi2005chart = ui.Chart.image.series({
+  imageCollection: modis2005,
+  region: dresden_geometry,
+  reducer: ee.Reducer.mean(),
+  scale: 250,
+  xProperty:'system:index'
+});
+print(ndvi2005chart);
+
+// Time series chart 2020
+var ndvi2020chart = ui.Chart.image.series({
+  imageCollection: modis2020,
+  region: dresden_geometry,
+  reducer: ee.Reducer.mean(),
+  scale: 250,
+  xProperty:'system:index'
+});
+print(ndvi2020chart);
+
+
+
